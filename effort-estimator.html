@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Data Migration Effort Estimator</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+  :root { --bg:#f8fafc; --card:#fff; --border:#e2e8f0; --text:#111827;
+          --muted:#6b7280; --primary:#2563eb; --shadow: 0 1px 3px rgba(0,0,0,.08); }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--text); }
+  .wrap { max-width: 1400px; margin: 0 auto; padding: 24px; }
+  .top { display:flex; justify-content:space-between; align-items:center; margin-bottom: 16px; }
+  a.back { color: var(--primary); text-decoration: none; font-size: .9rem; }
+  h1 { font-size: 1.75rem; margin: 0 0 6px; letter-spacing: -.02em; }
+  .lead { color: var(--muted); margin-bottom: 20px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
+  .card { background: var(--card); border: 1px solid var(--border);
+          border-radius: 12px; padding: 20px; box-shadow: var(--shadow); }
+  label { display:block; font-size: .78rem; font-weight: 700; text-transform: uppercase;
+          letter-spacing: .05em; color: var(--muted); margin-bottom: 8px; }
+  input[type=file], input[type=number], select {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--border);
+    border-radius: 8px; font-size: .92rem; background: #fff;
+  }
+  .msg { padding: 12px 14px; border-radius: 8px; font-size: .88rem; margin: 12px 0; }
+  .err { background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; }
+  .ok  { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
+  .info { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; }
+  h2 { font-size: 1.1rem; margin: 20px 0 10px; }
+  .btnrow { display:flex; gap:8px; margin-bottom: 10px; }
+  button { background: #fff; border: 1px solid var(--border); padding: 8px 14px;
+           border-radius: 8px; cursor: pointer; font-size: .85rem; font-weight: 500; }
+  button:hover { border-color: var(--primary); color: var(--primary); }
+  button.primary { background: var(--primary); color:#fff; border-color: var(--primary); }
+  button.primary:hover { background:#1d4ed8; }
+  select[multiple] { min-height: 200px; }
+  .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0; }
+  .metric { background:#fff; border:1px solid var(--border); border-radius:12px; padding:14px; }
+  .metric .k { font-size:.72rem; text-transform:uppercase; color: var(--muted); font-weight:600; letter-spacing:.05em; }
+  .metric .v { font-size:1.4rem; font-weight:800; margin-top:4px; }
+  table { width:100%; border-collapse: collapse; background:#fff; border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+  th, td { padding: 10px 12px; text-align:left; font-size: .88rem; border-bottom: 1px solid var(--border); }
+  th { background:#f1f5f9; font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+  .tot { font-weight: 700; background: #f8fafc; }
+  @media (max-width: 900px){ .row{grid-template-columns:1fr;} .metrics{grid-template-columns:repeat(2,1fr);} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <a class="back" href="index.html">← Back to ADM Tools</a>
+  </div>
+  <h1>Data Migration Effort Estimator</h1>
+  <p class="lead">Estimate Build, Admin, and Data Load effort by selecting workstreams and data objects from a single Excel workbook.</p>
+
+  <div class="row">
+    <div class="card">
+      <label>Upload Excel Workbook</label>
+      <input type="file" id="fileInput" accept=".xlsx,.xls" />
+      <p style="font-size:.8rem;color:var(--muted);margin-top:8px;">
+        Required sheets: <b>Build_Data</b>, <b>Complexity_Map</b>, <b>Admin_Activities</b>, <b>Data_Load_Activities</b>
+      </p>
+    </div>
+    <div class="card">
+      <label>Number of Data Loads</label>
+      <input type="number" id="loadCount" min="1" value="1" />
+      <p style="font-size:.8rem;color:var(--muted);margin-top:8px;">Data Load activities scale based on this number.</p>
+    </div>
+  </div>
+
+  <div id="status"></div>
+
+  <div id="selectors" style="display:none;">
+    <div class="row">
+      <div class="card">
+        <h2 style="margin-top:0;">Workstreams</h2>
+        <div class="btnrow">
+          <button onclick="selectAllWS()">Select All</button>
+          <button onclick="clearWS()">Clear</button>
+        </div>
+        <select id="wsSelect" multiple onchange="onWSChange()"></select>
+      </div>
+      <div class="card">
+        <h2 style="margin-top:0;">Objects</h2>
+        <div class="btnrow">
+          <button onclick="selectAllObj()">Select All</button>
+          <button onclick="clearObj()">Clear</button>
+        </div>
+        <select id="objSelect" multiple onchange="recompute()"></select>
+      </div>
+    </div>
+
+    <h2>Summary</h2>
+    <div class="metrics" id="metrics"></div>
+    <button class="primary" onclick="exportCSV()">Export Summary CSV</button>
+
+    <h2>Build Breakdown</h2>
+    <div id="buildOut"></div>
+
+    <h2>Admin Breakdown</h2>
+    <div id="adminOut"></div>
+
+    <h2>Data Load Breakdown</h2>
+    <div id="dlOut"></div>
+  </div>
+</div>
+
+<script>
+const REQUIRED = ["Build_Data","Complexity_Map","Admin_Activities","Data_Load_Activities"];
+let DATA = null;
+
+const normHeader = h => (h==null?"":String(h)).trim().replace(/\ufeff/g,"").replace(/\s+/g," ").toLowerCase();
+const normVal    = v => (v==null?"":String(v)).trim();
+const normYesNo  = v => ["yes","y","true","1"].includes(normVal(v).toLowerCase());
+const normBasis  = v => normVal(v).toLowerCase().replace(/\s+/g," ");
+const toNum      = (v,d=0) => { const n = parseFloat(v); return isNaN(n)?d:n; };
+const fmt = n => Number.isInteger(+n) ? +n : Math.round(n*100)/100;
+
+function findCol(cols, aliases){
+  for(const c of cols){ if(aliases.includes(normHeader(c))) return c; }
+  return null;
+}
+
+function setStatus(html){ document.getElementById("status").innerHTML = html; }
+
+document.getElementById("fileInput").addEventListener("change", async (e)=>{
+  const f = e.target.files[0]; if(!f) return;
+  try {
+    const buf = await f.arrayBuffer();
+    const wb = XLSX.read(buf, {type:"array"});
+    processWorkbook(wb);
+  } catch(err){ setStatus(`<div class="msg err">Failed to read: ${err.message}</div>`); }
+});
+
+document.getElementById("loadCount").addEventListener("input", ()=> DATA && recompute());
+
+function processWorkbook(wb){
+  for(const s of REQUIRED){
+    if(!wb.SheetNames.includes(s)){
+      setStatus(`<div class="msg err">Sheet "${s}" not found.</div>`); return;
+    }
+  }
+  const rows = n => XLSX.utils.sheet_to_json(wb.Sheets[n], {defval:""});
+  const build = rows("Build_Data");
+  const comp  = rows("Complexity_Map");
+  const admin = rows("Admin_Activities");
+  const dl    = rows("Data_Load_Activities");
+
+  if(!build.length){ setStatus(`<div class="msg err">Build_Data empty.</div>`); return; }
+
+  const bc = Object.keys(build[0]);
+  const objectCol   = findCol(bc, ["data object name","object","data object"]);
+  const wsCol       = findCol(bc, ["workstream"]);
+  const tableCol    = findCol(bc, ["table name","table"]);
+  const descCol     = findCol(bc, ["table description","description"]);
+  const cplxCol     = findCol(bc, ["complexity"]);
+  if(!objectCol||!wsCol||!tableCol||!cplxCol){
+    setStatus(`<div class="msg err">Build_Data missing required columns.</div>`); return;
+  }
+
+  const cc = Object.keys(comp[0]||{});
+  const compCol = findCol(cc,["complexity"]);
+  const compTimeCol = findCol(cc,["time","hours"]);
+  if(!compCol||!compTimeCol){ setStatus(`<div class="msg err">Complexity_Map missing columns.</div>`); return; }
+
+  const buildActs = (arr) => {
+    if(!arr.length) return [];
+    const ac = Object.keys(arr[0]);
+    const aA = findCol(ac,["activity"]);
+    const aT = findCol(ac,["time","hours"]);
+    const aB = findCol(ac,["basis"]);
+    const aI = findCol(ac,["include"]);
+    if(!aA||!aT||!aB||!aI) throw new Error("Activity sheet missing columns");
+    return arr.map(r=>({
+      activity: normVal(r[aA]),
+      time: toNum(r[aT]),
+      basis: normBasis(r[aB]),
+      include: normYesNo(r[aI]),
+    })).filter(x=>x.activity);
+  };
+
+  let adminActs, dlActs;
+  try { adminActs = buildActs(admin); dlActs = buildActs(dl); }
+  catch(e){ setStatus(`<div class="msg err">${e.message}</div>`); return; }
+
+  const rawData = build.map(r=>({
+    object: normVal(r[objectCol]),
+    workstream: normVal(r[wsCol]),
+    tableName: normVal(r[tableCol]),
+    tableDescription: descCol?normVal(r[descCol]):"",
+    complexity: normVal(r[cplxCol]),
+  })).filter(r=>r.object&&r.workstream&&r.tableName);
+
+  const cmap = {};
+  comp.forEach(r=>{ const c = normVal(r[compCol]); if(c) cmap[c] = toNum(r[compTimeCol]); });
+
+  DATA = { rawData, cmap, adminActs, dlActs };
+
+  setStatus(`<div class="msg ok">Workbook loaded. Build rows: ${rawData.length} · Complexities: ${Object.keys(cmap).length} · Admin: ${adminActs.length} · Data Load: ${dlActs.length}</div>`);
+  document.getElementById("selectors").style.display = "block";
+  populateWorkstreams();
+}
+
+function populateWorkstreams(){
+  const ws = [...new Set(DATA.rawData.map(r=>r.workstream))].filter(Boolean).sort();
+  const sel = document.getElementById("wsSelect");
+  sel.innerHTML = ws.map(w=>`<option value="${w}">${w}</option>`).join("");
+  document.getElementById("objSelect").innerHTML = "";
+  recompute();
+}
+
+function getSelected(id){ return [...document.getElementById(id).selectedOptions].map(o=>o.value); }
+
+function onWSChange(){
+  const ws = getSelected("wsSelect");
+  const seen = {};
+  DATA.rawData.forEach(r=>{
+    if(ws.includes(r.workstream)){
+      const k = r.workstream+"||"+r.object;
+      if(!seen[k]) seen[k] = {key:k, ws:r.workstream, obj:r.object};
+    }
+  });
+  const list = Object.values(seen).sort((a,b)=>a.ws.localeCompare(b.ws)||a.obj.localeCompare(b.obj));
+  document.getElementById("objSelect").innerHTML =
+    list.map(o=>`<option value="${o.key}">${o.ws} | ${o.obj}</option>`).join("");
+  recompute();
+}
+
+function selectAllWS(){ [...document.getElementById("wsSelect").options].forEach(o=>o.selected=true); onWSChange(); }
+function clearWS(){ document.getElementById("wsSelect").selectedIndex=-1; onWSChange(); }
+function selectAllObj(){ [...document.getElementById("objSelect").options].forEach(o=>o.selected=true); recompute(); }
+function clearObj(){ document.getElementById("objSelect").selectedIndex=-1; recompute(); }
+
+function calcActHours(act, tt, to, tw, dlc, isDL){
+  if(!act.include) return 0;
+  const b = act.basis, t = act.time;
+  const mult = isDL ? dlc : 1;
+  if(b==="fixed") return t*mult;
+  if(b==="per table") return t*tt*mult;
+  if(b==="per object") return t*to*mult;
+  if(b==="per workstream") return t*tw*mult;
+  return t*mult;
+}
+
+function recompute(){
+  if(!DATA) return;
+  const ws = getSelected("wsSelect");
+  const objs = getSelected("objSelect");
+  const dlc = Math.max(1, parseInt(document.getElementById("loadCount").value)||1);
+  const objSet = new Set(objs);
+
+  const filtered = DATA.rawData.filter(r=> ws.includes(r.workstream) && objSet.has(r.workstream+"||"+r.object));
+
+  const grouped = {};
+  filtered.forEach(r=>{
+    const k = r.workstream+"||"+r.object;
+    const hpt = DATA.cmap[r.complexity]||0;
+    if(!grouped[k]) grouped[k] = {workstream:r.workstream, object:r.object, tables:0, complexity:r.complexity, hoursPerTable:hpt};
+    grouped[k].tables++;
+  });
+
+  const build = Object.values(grouped).sort((a,b)=>a.workstream.localeCompare(b.workstream)||a.object.localeCompare(b.object));
+  let totalTables=0, totalBuild=0;
+  const buildBD = build.map(i=>{
+    const h = i.tables*i.hoursPerTable;
+    totalTables += i.tables; totalBuild += h;
+    return {...i, buildHours:h};
+  });
+
+  const to = objs.length, tw = ws.length;
+  let totalAdmin=0;
+  const adminBD = DATA.adminActs.filter(a=>a.include).map(a=>{
+    const h = calcActHours(a, totalTables, to, tw, 1, false);
+    totalAdmin += h; return {...a, hours:h};
+  });
+  let totalDL=0;
+  const dlBD = DATA.dlActs.filter(a=>a.include).map(a=>{
+    const h = calcActHours(a, totalTables, to, tw, dlc, true);
+    totalDL += h; return {...a, hours:h};
+  });
+
+  const grand = totalBuild+totalAdmin+totalDL;
+
+  const M = (k,v)=>`<div class="metric"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  document.getElementById("metrics").innerHTML =
+    M("Workstreams", tw)+M("Objects", to)+M("Tables", totalTables)+M("Data Loads", dlc)+
+    M("Build Hours", fmt(totalBuild))+M("Admin Hours", fmt(totalAdmin))+
+    M("Data Load Hours", fmt(totalDL))+M("Grand Total", fmt(grand));
+
+  document.getElementById("buildOut").innerHTML = buildBD.length ? tableHTML(
+    ["Workstream","Object","Tables","Complexity","Hours per Table","Build Hours"],
+    buildBD.map(b=>[b.workstream,b.object,b.tables,b.complexity,fmt(b.hoursPerTable),fmt(b.buildHours)]),
+    ["Total","",totalTables,"","",fmt(totalBuild)]
+  ) : `<p style="color:var(--muted);font-size:.88rem;">Select workstreams and objects to view.</p>`;
+
+  document.getElementById("adminOut").innerHTML = adminBD.length ? tableHTML(
+    ["Activity","Basis","Base Time","Calculated Hours"],
+    adminBD.map(a=>[a.activity, a.basis||"fixed", fmt(a.time), fmt(a.hours)]),
+    ["Total","","",fmt(totalAdmin)]
+  ) : `<p style="color:var(--muted);font-size:.88rem;">No included admin activities.</p>`;
+
+  document.getElementById("dlOut").innerHTML = dlBD.length ? tableHTML(
+    ["Activity","Basis","Base Time","Data Loads","Calculated Hours"],
+    dlBD.map(d=>[d.activity, d.basis||"fixed", fmt(d.time), dlc, fmt(d.hours)]),
+    ["Total","","","",fmt(totalDL)]
+  ) : `<p style="color:var(--muted);font-size:.88rem;">No included data load activities.</p>`;
+
+  window.__RESULTS = { ws, objs, dlc, totalTables, totalBuild, totalAdmin, totalDL, grand,
+                       buildBD, adminBD, dlBD, to, tw };
+}
+
+function tableHTML(headers, rows, totalRow){
+  const thead = `<tr>${headers.map(h=>`<th>${h}</th>`).join("")}</tr>`;
+  const body = rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join("")}</tr>`).join("");
+  const tot = totalRow ? `<tr class="tot">${totalRow.map(c=>`<td>${c}</td>`).join("")}</tr>` : "";
+  return `<table><thead>${thead}</thead><tbody>${body}${tot}</tbody></table>`;
+}
+
+function exportCSV(){
+  const R = window.__RESULTS; if(!R) return;
+  const rows = [];
+  const push = r => rows.push(r);
+  const esc = v => `"${String(v).replace(/"/g,'""')}"`;
+  push(["Summary"]); push(["Metric","Value"]);
+  push(["Selected Workstreams", R.ws.join(" | ")]);
+  push(["Selected Objects", R.objs.map(k=>k.replace("||"," | ")).join(" ; ")]);
+  push(["Total Workstreams", R.tw]); push(["Total Objects", R.to]); push(["Total Tables", R.totalTables]);
+  push(["Number of Data Loads", R.dlc]);
+  push(["Build Hours", fmt(R.totalBuild)]); push(["Admin Hours", fmt(R.totalAdmin)]);
+  push(["Data Load Hours", fmt(R.totalDL)]); push(["Grand Total Hours", fmt(R.grand)]);
+  push([]); push(["Build Breakdown"]);
+  push(["Workstream","Object","Tables","Complexity","Hours per Table","Build Hours"]);
+  R.buildBD.forEach(b=>push([b.workstream,b.object,b.tables,b.complexity,fmt(b.hoursPerTable),fmt(b.buildHours)]));
+  push(["Total","",R.totalTables,"","",fmt(R.totalBuild)]);
+  push([]); push(["Admin Breakdown"]); push(["Activity","Basis","Base Time","Calculated Hours"]);
+  R.adminBD.forEach(a=>push([a.activity, a.basis||"fixed", fmt(a.time), fmt(a.hours)]));
+  push(["Total","","",fmt(R.totalAdmin)]);
+  push([]); push(["Data Load Breakdown"]); push(["Activity","Basis","Base Time","Data Loads","Calculated Hours"]);
+  R.dlBD.forEach(d=>push([d.activity, d.basis||"fixed", fmt(d.time), R.dlc, fmt(d.hours)]));
+  push(["Total","","","",fmt(R.totalDL)]);
+  const csv = rows.map(r=>r.map(esc).join(",")).join("\n");
+  const blob = new Blob([csv], {type:"text/csv"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "Data_Migration_Effort_Full_Export.csv";
+  a.click();
+}
+</script>
+</body>
+</html>

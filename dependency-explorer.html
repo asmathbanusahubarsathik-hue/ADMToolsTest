@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Dependency Explorer</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/dist/vis-network.min.js"></script>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/dist/dist/vis-network.min.css" rel="stylesheet"/>
+<style>
+  :root { --bg:#f8fafc; --card:#fff; --border:#e2e8f0; --text:#111827; --muted:#6b7280;
+          --primary:#2563eb; --red:#dc2626; --blue:#2563eb; --green:#16a34a;
+          --shadow: 0 1px 3px rgba(0,0,0,.08); }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--text); display:flex; min-height:100vh; }
+  aside { width: 320px; background:#fff; border-right: 1px solid var(--border); padding: 20px;
+          overflow-y:auto; height:100vh; position:sticky; top:0; }
+  main { flex:1; padding: 24px; overflow-x:hidden; }
+  a.back { color: var(--primary); text-decoration:none; font-size:.9rem; }
+  h1 { font-size: 1.6rem; margin: 8px 0 16px; letter-spacing: -.02em; }
+  h2 { font-size: 1.1rem; margin: 20px 0 10px; }
+  .label { font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em;
+           color: var(--muted); margin: 16px 0 8px; }
+  input, select { width:100%; padding:9px 11px; border:1px solid var(--border);
+                  border-radius:8px; font-size:.9rem; background:#fff; }
+  .msg { padding:12px 14px; border-radius:8px; font-size:.88rem; margin: 12px 0; }
+  .err { background:#fef2f2; border:1px solid #fecaca; color:#b91c1c; }
+  .info { background:#eff6ff; border:1px solid #bfdbfe; color:#1e40af; }
+  .metrics { display:grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin-bottom: 16px; }
+  .metric { background:#fff; border:1px solid var(--border); border-radius:12px; padding: 14px; }
+  .metric .k { font-size:.72rem; text-transform:uppercase; color: var(--muted); font-weight:600; }
+  .metric .v { font-size:1.3rem; font-weight:800; margin-top:4px; word-break:break-word; }
+  .card { background:#fff; border:1px solid var(--border); border-radius:14px;
+          padding:22px; box-shadow: var(--shadow); margin-bottom:16px; }
+  .card-title { font-size:1.05rem; font-weight:700; }
+  .subtitle { font-size:.82rem; color: var(--muted); margin:6px 0 12px; }
+  .body { background:#f8fafc; border:1px solid var(--border); border-radius:8px;
+          padding:14px 16px; font-size:.9rem; line-height:1.6; }
+  .badge { display:inline-block; padding:2px 10px; border-radius:20px; font-size:.72rem;
+           font-weight:600; text-transform:uppercase; margin-left:8px;
+           background:#fef2f2; color:#dc2626; border:1px solid #fecaca; }
+  .legend { display:flex; gap:20px; align-items:center; padding:10px 16px; background:#fff;
+            border:1px solid var(--border); border-radius:10px; margin:12px 0; font-size:.85rem; }
+  .dot { display:inline-block; width:12px; height:12px; border-radius:50%; margin-right:6px; vertical-align:middle; }
+  #graph { height: 560px; background:#f8fafc; border:1px solid var(--border); border-radius:14px; }
+  .depgrid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+  .btnlist { display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
+  .btnlist button { padding:8px 12px; background:#fff; border:1px solid var(--border);
+                    border-radius:8px; font-size:.85rem; cursor:pointer; text-align:left; }
+  .btnlist button:hover { border-color: var(--primary); color: var(--primary); }
+  details { background:#fff; border:1px solid var(--border); border-radius:12px; padding:12px 16px; margin: 8px 0; }
+  summary { cursor: pointer; font-weight:600; font-size:.92rem; }
+  @media (max-width: 900px){ .metrics{grid-template-columns:repeat(2,1fr);} .depgrid{grid-template-columns:1fr;} aside{position:relative; width:100%; height:auto;} body{flex-direction:column;} }
+</style>
+</head>
+<body>
+<aside>
+  <a class="back" href="index.html">← Back</a>
+  <h2 style="margin-top:12px;">🔗 Explorer</h2>
+  <p style="font-size:.85rem;color:var(--muted);">Navigate migration object dependencies</p>
+
+  <div class="label">Upload File</div>
+  <input type="file" id="fileInput" accept=".xlsx,.xls" />
+  <p style="font-size:.75rem;color:var(--muted);margin-top:6px;">Columns: Object | Domain | Depends On | Description</p>
+
+  <div id="filters" style="display:none;">
+    <div class="label">Search & Filter</div>
+    <input type="text" id="search" placeholder="Object, domain, or keyword..." />
+    <div style="height:8px;"></div>
+    <select id="domain"></select>
+
+    <div class="label">Select Object</div>
+    <select id="objectSel"></select>
+
+    <div class="label">Statistics</div>
+    <div id="stats" style="font-size:.88rem;line-height:1.7;"></div>
+  </div>
+</aside>
+
+<main>
+  <h1>Migration Object Dependency Explorer</h1>
+  <div id="status"><div class="msg info">👈 Upload an Excel file from the sidebar to begin.</div></div>
+
+  <div id="content" style="display:none;">
+    <div class="metrics" id="metrics"></div>
+    <div class="card">
+      <div><span class="card-title" id="selLabel"></span><span class="badge">Selected</span></div>
+      <div class="subtitle" id="selMeta"></div>
+      <div class="body" id="selDesc"></div>
+    </div>
+
+    <h2>Dependency Graph</h2>
+    <div class="legend">
+      <span><span class="dot" style="background:var(--red)"></span><b>Selected</b></span>
+      <span><span class="dot" style="background:var(--blue)"></span><b>Upstream</b> (depends on)</span>
+      <span><span class="dot" style="background:var(--green)"></span><b>Downstream</b> (depended by)</span>
+      <span style="margin-left:auto;color:var(--muted);font-size:.78rem;">Arrow A → B means A depends on B</span>
+    </div>
+    <div id="graph"></div>
+
+    <h2>Direct Dependencies</h2>
+    <div class="depgrid">
+      <div>
+        <div style="margin-bottom:10px;"><span class="dot" style="background:var(--blue)"></span><b>Upstream</b> — <span id="upCount"></span></div>
+        <div id="upList" class="btnlist"></div>
+      </div>
+      <div>
+        <div style="margin-bottom:10px;"><span class="dot" style="background:var(--green)"></span><b>Downstream</b> — <span id="downCount"></span></div>
+        <div id="downList" class="btnlist"></div>
+      </div>
+    </div>
+
+    <details><summary>🔍 All transitive upstream (<span id="allUpCount">0</span>)</summary>
+      <div id="allUpList" class="btnlist" style="margin-top:10px;"></div>
+    </details>
+    <details><summary>🔍 All transitive downstream (<span id="allDownCount">0</span>)</summary>
+      <div id="allDownList" class="btnlist" style="margin-top:10px;"></div>
+    </details>
+  </div>
+</main>
+
+<script>
+let NODES = {}, UPSTREAM = {}, DOWNSTREAM = {};
+let SELECTED = null;
+let network = null;
+
+const slug = t => String(t||"").trim().toLowerCase().replace(/&/g,"and").replace(/\//g,"-")
+  .replace(/[^\w\s-]/g,"").replace(/[\s_]+/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"");
+const clean = v => v==null?"":String(v).trim();
+const isNone = t => !t || t.toLowerCase()==="none" || t.toLowerCase().startsWith("none (");
+const splitDeps = v => { const t = clean(v); if(isNone(t)) return []; return t.split(";").map(x=>x.trim()).filter(x=>x&&!isNone(x)); };
+
+document.getElementById("fileInput").addEventListener("change", async (e)=>{
+  const f = e.target.files[0]; if(!f) return;
+  try {
+    const buf = await f.arrayBuffer();
+    const wb = XLSX.read(buf, {type:"array"});
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, {header:1, defval:""});
+    buildGraph(rows);
+  } catch(err){ document.getElementById("status").innerHTML = `<div class="msg err">Error: ${err.message}</div>`; }
+});
+
+function buildGraph(rows){
+  NODES = {}; UPSTREAM = {}; DOWNSTREAM = {};
+  const seenEdge = new Set();
+
+  rows.forEach(row=>{
+    const object = clean(row[0]); const domain = clean(row[1]);
+    const depsRaw = clean(row[2]); const desc = clean(row[3]);
+    if(!object) return;
+    const low = object.toLowerCase();
+    if(["object name","object","business object"].includes(low)) return;
+    const id = slug(object);
+    if(!NODES[id]) NODES[id] = {id, label:object, domain, description:desc};
+    else { if(!NODES[id].domain && domain) NODES[id].domain = domain;
+           if(!NODES[id].description && desc) NODES[id].description = desc; }
+    splitDeps(depsRaw).forEach(dep=>{
+      const did = slug(dep);
+      if(!NODES[did]) NODES[did] = {id:did, label:dep, domain:"", description:""};
+      const k = id+"->"+did;
+      if(!seenEdge.has(k)){
+        seenEdge.add(k);
+        (UPSTREAM[id]=UPSTREAM[id]||[]).push(did);
+        (DOWNSTREAM[did]=DOWNSTREAM[did]||[]).push(id);
+      }
+    });
+  });
+
+  if(!Object.keys(NODES).length){
+    document.getElementById("status").innerHTML = `<div class="msg err">No nodes found.</div>`; return;
+  }
+
+  document.getElementById("status").innerHTML = "";
+  document.getElementById("filters").style.display = "block";
+  document.getElementById("content").style.display = "block";
+  populateDomains();
+  populateObjects();
+  const first = Object.keys(NODES).find(k=>k==="projects-wbs") || Object.keys(NODES)[0];
+  selectNode(first);
+}
+
+function populateDomains(){
+  const doms = [...new Set(Object.values(NODES).map(n=>n.domain).filter(Boolean))].sort();
+  document.getElementById("domain").innerHTML =
+    `<option value="All">All</option>` + doms.map(d=>`<option>${d}</option>`).join("");
+}
+
+function filteredIds(){
+  const s = document.getElementById("search").value.trim().toLowerCase();
+  const d = document.getElementById("domain").value;
+  return Object.values(NODES).filter(n=>{
+    if(d!=="All" && n.domain!==d) return false;
+    if(s){ const hay = (n.label+" "+n.domain+" "+n.description).toLowerCase(); if(!hay.includes(s)) return false; }
+    return true;
+  }).sort((a,b)=>a.label.localeCompare(b.label)).map(n=>n.id);
+}
+
+function populateObjects(){
+  const ids = filteredIds();
+  const sel = document.getElementById("objectSel");
+  sel.innerHTML = ids.map(id=>`<option value="${id}">${NODES[id].label}</option>`).join("");
+  if(SELECTED && ids.includes(SELECTED)) sel.value = SELECTED;
+  document.getElementById("stats").innerHTML =
+    `<b>Total Objects:</b> ${Object.keys(NODES).length}<br>
+     <b>Domains:</b> ${new Set(Object.values(NODES).map(n=>n.domain).filter(Boolean)).size}<br>
+     <b>Filtered Results:</b> ${ids.length}`;
+  return ids;
+}
+
+document.getElementById("search").addEventListener("input", ()=>{ const ids=populateObjects(); if(ids.length && !ids.includes(SELECTED)) selectNode(ids[0]); });
+document.getElementById("domain").addEventListener("change", ()=>{ const ids=populateObjects(); if(ids.length && !ids.includes(SELECTED)) selectNode(ids[0]); });
+document.getElementById("objectSel").addEventListener("change", (e)=> selectNode(e.target.value));
+
+function traverse(start, map){
+  const visited = new Set(); const q = [start];
+  while(q.length){ const c = q.shift(); (map[c]||[]).forEach(n=>{ if(!visited.has(n)){ visited.add(n); q.push(n); } }); }
+  return visited;
+}
+
+function selectNode(id){
+  SELECTED = id;
+  document.getElementById("objectSel").value = id;
+  const n = NODES[id];
+  const dUp = UPSTREAM[id] || [];
+  const dDown = DOWNSTREAM[id] || [];
+  const aUp = traverse(id, UPSTREAM);
+  const aDown = traverse(id, DOWNSTREAM);
+
+  const M = (k,v)=>`<div class="metric"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  document.getElementById("metrics").innerHTML =
+    M("Selected", n.label)+M("Upstream", dUp.length)+M("Downstream", dDown.length)+M("Transitive Reach", aUp.size+aDown.size);
+
+  document.getElementById("selLabel").textContent = n.label;
+  document.getElementById("selMeta").innerHTML =
+    `Domain: <b>${n.domain||"—"}</b> &nbsp;|&nbsp; Upstream: <b>${dUp.length}</b> &nbsp;|&nbsp; Downstream: <b>${dDown.length}</b>`;
+  document.getElementById("selDesc").innerHTML = n.description || "<em>No description available.</em>";
+
+  renderGraph(id, dUp, dDown);
+  renderList("upList", dUp); document.getElementById("upCount").textContent = dUp.length;
+  renderList("downList", dDown); document.getElementById("downCount").textContent = dDown.length;
+  renderList("allUpList", [...aUp]); document.getElementById("allUpCount").textContent = aUp.size;
+  renderList("allDownList", [...aDown]); document.getElementById("allDownCount").textContent = aDown.size;
+}
+
+function renderList(containerId, ids){
+  const c = document.getElementById(containerId);
+  if(!ids.length){ c.innerHTML = `<div style="color:var(--muted);font-size:.85rem;grid-column:1/-1;">None</div>`; return; }
+  ids.sort((a,b)=>NODES[a].label.localeCompare(NODES[b].label));
+  c.innerHTML = ids.map(id=>`<button onclick="selectNode('${id}')">${NODES[id].label}</button>`).join("");
+}
+
+function renderGraph(sel, up, down){
+  const nodes = [], edges = [];
+  nodes.push({ id: sel, label: NODES[sel].label, color:{background:"#dc2626", border:"#dc2626"}, size: 28, font:{color:"#111"} });
+  up.forEach(u=> nodes.push({ id:u, label:NODES[u].label, color:{background:"#2563eb",border:"#2563eb"}, size:20, font:{color:"#111"} }));
+  down.forEach(d=> nodes.push({ id:d, label:NODES[d].label, color:{background:"#16a34a",border:"#16a34a"}, size:20, font:{color:"#111"} }));
+  up.forEach(u=> edges.push({ from: sel, to: u, arrows:"to", color:{color:"#2563eb"}, width:2 }));
+  down.forEach(d=> edges.push({ from: d, to: sel, arrows:"to", color:{color:"#16a34a"}, width:2 }));
+
+  const container = document.getElementById("graph");
+  const data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
+  const options = {
+    interaction:{ hover:true, zoomView:true, dragView:true },
+    physics:{ enabled:true, stabilization:{iterations:300, fit:true},
+              barnesHut:{gravitationalConstant:-3000, centralGravity:0.4, springLength:160, springConstant:0.06, damping:0.15, avoidOverlap:0.3} },
+    nodes:{ shape:"dot", font:{ size:13, face:"Inter, system-ui, sans-serif" }, borderWidth:2 },
+    edges:{ smooth:{ type:"curvedCW", roundness:0.15 }, arrows:{ to:{ scaleFactor:0.8 } } }
+  };
+  if(network) network.destroy();
+  network = new vis.Network(container, data, options);
+  network.on("click", p=>{ if(p.nodes.length){ selectNode(p.nodes[0]); } });
+  network.once("stabilizationIterationsDone", ()=>{
+    network.setOptions({physics:{enabled:false}});
+    network.fit({animation:{duration:400}});
+  });
+}
+</script>
+</body>
+</html>
